@@ -9,11 +9,26 @@ class CityScapeDataset(Dataset):
     def __init__(self, dataset_list):
         self.dataset_list = dataset_list
 
-        # TODO: implement prior bounding box
-        self.prior_bboxes = generate_prior_bboxes(prior_layer_cfg='Todo, use your own setting, please refer bbox_helper.py for an example')
+        prior_layer_cfg = [
+            {'layer_name': 'Layer11',
+             'feature_dim_hw': (38, 38), 'bbox_size': (60, 60), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer23',
+             'feature_dim_hw': (19, 19), 'bbox_size': (95, 95), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer27',
+             'feature_dim_hw': (10, 10), 'bbox_size': (130, 130), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer29',
+             'feature_dim_hw': (5, 5), 'bbox_size': (165, 165), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer31',
+             'feature_dim_hw': (3, 3), 'bbox_size': (200, 200), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer33',
+             'feature_dim_hw': (2, 2), 'bbox_size': (235, 235), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
+            {'layer_name': 'Layer35',
+             'feature_dim_hw': (1, 1), 'bbox_size': (270, 270), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)}
+        ]
 
-        # Pre-process parameters:
-        #  Normalize: (I-self.mean)/self.std
+        self.prior_bboxes = generate_prior_bboxes(prior_layer_cfg=prior_layer_cfg)
+
+        # Pre-process parameters, normalize: (I-self.mean)/self.std.
         self.mean = np.asarray((127, 127, 127))
         self.std = 128.0
 
@@ -26,8 +41,8 @@ class CityScapeDataset(Dataset):
     def __getitem__(self, idx):
         """
         Load the data from list, and match the ground-truth bounding boxes with prior bounding boxes.
-        :return bbox_tensor: matched bounding box, dim: (num_priors, 4)
-        :return bbox_label: matched classification label, dim: (num_priors)
+        :return bbox_tensor: matched bounding box, dim: (num_priors, 4).
+        :return bbox_label: matched classification label, dim: (num_priors).
         """
 
         # TODO: implement data loading
