@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import math
 
 ''' Prior Bounding Box  ------------------------------------------------------------------------------------------------
@@ -93,32 +94,27 @@ def iou(a: torch.Tensor, b: torch.Tensor):
     assert b.shape[1] == 4
 
     # Handle the case if b is a reference.
-    if b.shape[0] == 1 & a.shape[0] > 1:
-        b = b.repeat(a.shape[0])
+    if b.shape[0] == 1 and a.shape[0] > 1:
+        ndb = np.array(b)
+        ndb = ndb.repeat(a.shape[0], axis=0)
+        b = torch.Tensor(ndb)
 
     # Decide the relationship and compute IoU.
     iou_list = []
     for index in range(0, a.shape[0]):
-        if a[index][0] < b[index][0]:
-            left = a[index]
-            right = b[index]
-        else:
-            left = b[index]
-            right = a[index]
 
-        # Compute the intersection area.
-        if left[1] > right[1]:
-            nw_x = right[0] - right[2] / 2
-            nw_y = right[1] + right[3] / 2
-            se_x = left[0] + left[2] / 2
-            se_y = left[1] - left[3] / 2
-            intersection = max(se_x - nw_x, 0) * max(nw_y - se_y, 0)
+        # Compute the intersection.
+        box1 = center2corner(a[index])
+        box2 = center2corner(b[index])
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        if x1 > x2 or y1 > y2:
+            intersection = 0
         else:
-            ne_x = left[0] + left[2] / 2
-            ne_y = left[1] + left[3] / 2
-            sw_x = right[0] - right[2] / 2
-            sw_y = right[1] - right[3] / 2
-            intersection = max(ne_x - sw_x, 0) * max(ne_y - sw_y, 0)
+            intersection = (x2 - x1) * (y2 - y1)
 
         # Compute the area for a and b.
         area_a = a[index][2] * a[index][3]
@@ -134,6 +130,48 @@ def iou(a: torch.Tensor, b: torch.Tensor):
     return iou_tensor
 
 
+def ios(a: torch.Tensor, b: torch.Tensor):
+    """
+    # Compute the intersection over smaller object.
+    :param a: area, dim: (n_items, 4).
+    :param b: area, dim: (n_items, 4).
+    :return: intersection over smaller value: dim: (n_item).
+    """
+
+    # Handle the case if b is a reference.
+    if b.shape[0] == 1 and a.shape[0] > 1:
+        ndb = np.array(b)
+        ndb = ndb.repeat(a.shape[0], axis=0)
+        b = torch.Tensor(ndb)
+
+    # Decide the relationship and compute.
+    ios_list = []
+    for index in range(0, a.shape[0]):
+
+        # Compute the intersection.
+        box1 = center2corner(a[index])
+        box2 = center2corner(b[index])
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        if x1 > x2 or y1 > y2:
+            intersection = 0
+        else:
+            intersection = (x2 - x1) * (y2 - y1)
+
+        # Compute the area for a and b.
+        area_a = a[index][2] * a[index][3]
+        area_b = b[index][2] * b[index][3]
+
+        ios_list.append(intersection / min(area_a, area_b))
+
+    ios_tensor = torch.Tensor(ios_list)
+
+    return ios_tensor
+
+
 def match_priors(
         prior_bboxes: torch.Tensor,
         oracle_bboxes: torch.Tensor,
@@ -142,14 +180,14 @@ def match_priors(
     """
     Match the ground-truth boxes with the priors. Used in cityscape_dataset.py.
 
-    :param oracle_bboxes: ground-truth bounding boxes, dim:(n_samples, 4).
+    :param oracle_bboxes: ground-truth bounding boxes, dim: (n_samples, 4).
     :param oracle_labels: ground-truth classification labels, negative (background) = 0, dim: (n_samples).
-    :param prior_bboxes: prior bounding boxes on different levels, dim:(num_priors, 4).
+    :param prior_bboxes: prior bounding boxes on different levels, dim: (num_priors, 4).
     :param iou_threshold: matching criterion.
     :return matched_boxes: real matched bounding box, dim: (num_priors, 4).
     :return matched_labels: real matched classification label, dim: (num_priors).
     """
-    # [DEBUG] Check if input is the desire shape
+    # [DEBUG] Check if input is the desire shape.
     assert oracle_bboxes.dim() == 2
     assert oracle_bboxes.shape[1] == 4
     assert oracle_labels.dim() == 1
@@ -157,12 +195,20 @@ def match_priors(
     assert prior_bboxes.dim() == 2
     assert prior_bboxes.shape[1] == 4
 
-    matched_boxes = None
-    matched_labels = None
+    matched_boxes = []
+    matched_labels = []
+    for i_prior in range(0, prior_bboxes.shape[0]):
+        for i_oracle in range(0, oracle_bboxes[0]):
+            iou_score = iou(prior_bboxes[i_prior], oracle_bboxes[i_oracle])
+            if iou_score > iou_threshold:
+                matched_boxes.append(prior_bboxes[i_prior])
+                matched_labels.append(oracle_labels[i_oracle])
 
-    # TODO: implement prior matching
+    matched_boxes = torch.Tensor(matched_boxes)
+    matched_labels = torch.Tensor(matched_labels)
+    matched_boxes = matched_boxes.view(matched_boxes.shape[0] / 4, 4)
 
-    # [DEBUG] Check if output is the desire shape
+    # [DEBUG] Check if output is the desire shape.
     assert matched_boxes.dim() == 2
     assert matched_boxes.shape[1] == 4
     assert matched_labels.dim() == 1
@@ -175,35 +221,70 @@ def match_priors(
 '''
 
 
-def nms_bbox(bbox_loc, bbox_confid_scores, overlap_threshold=0.5, prob_threshold=0.6):
+def nms_bbox(bbox_locs, bbox_confid_scores, overlap_threshold=0.5, prob_threshold=0.6):
     """
     Non-maximum suppression for computing best overlapping bounding box for a object
     Use this function when testing the samples.
 
-    :param bbox_loc: bounding box loc and size, dim: (num_priors, 4).
+    :param bbox_locs: bounding box loc and size, dim: (num_priors, 4).
     :param bbox_confid_scores: bounding box confidence probabilities, dim: (num_priors, num_classes).
     :param overlap_threshold: the overlap threshold for filtering out outliers.
+    :param prob_threshold: threshold to filter out boxes with low confidence level.
     :return: selected bounding box with classes.
     """
 
-    # [DEBUG] Check if input is the desire shape
-    assert bbox_loc.dim() == 2
-    assert bbox_loc.shape[1] == 4
+    # [DEBUG] Check if input is the desire shape.
+    assert bbox_locs.dim() == 2
+    assert bbox_locs.shape[1] == 4
     assert bbox_confid_scores.dim() == 2
-    assert bbox_confid_scores.shape[0] == bbox_loc.shape[0]
+    assert bbox_confid_scores.shape[0] == bbox_locs.shape[0]
 
-    sel_bbox = []
+    bboxes = []
+    num_dim = bbox_locs.shape[1]
+    num_class = bbox_confid_scores.shape[1]
+    for i_bbox in range(0, bbox_locs.shape[0]):
+        bboxes.append(torch.Tensor.numpy(bbox_locs[i_bbox]))
+        bboxes.append(torch.Tensor.numpy(bbox_confid_scores[i_bbox]))
 
-    # Todo: implement nms for filtering out the unnecessary bounding boxes
-    num_classes = bbox_confid_scores.shape[1]
-    for class_idx in range(0, num_classes):
+    bboxes = np.array(bboxes)
+    bboxes = bboxes.reshape(bbox_locs.shape[0], -1)
 
-        # Tip: use prob_threshold to set the prior that has higher scores and filter out the low score items for fast
-        # computation
+    # Preprocess to set any bounding box below confidence threshold to 0.
+    for i_bbox in range(0, bboxes.shape[0]):
+        if max(bboxes[i_bbox][4:]) < prob_threshold:
+            bboxes[i_bbox] = np.zeros(num_dim + num_class)
 
-        pass
+    # Remove any row only contains zeros.
+    bboxes = bboxes[~np.all(bboxes == 0, axis=1)]
 
-    return sel_bbox
+    # NMS filter out unnecessary bounding boxes.
+    for i_bbox in range(0, bboxes.shape[0]):
+        if max(bboxes[i_bbox]) == 0:
+            continue
+
+        # Compare with other boxes.
+        for j_bbox in range(0, bboxes.shape[0]):
+            if max(bboxes[j_bbox]) == 0 or j_bbox == i_bbox:
+                continue
+
+            # Check if two boxes are for the same class.
+            if np.argmax(bboxes[i_bbox][4:]) == np.argmax(bboxes[j_bbox][4:]):
+                a = torch.Tensor([bboxes[i_bbox][0:4]])
+                b = torch.Tensor([bboxes[j_bbox][0:4]])
+
+                # Check if the two boxes overlap enough. And remove the lower confidence one.
+                if iou(a, b)[0] > overlap_threshold:
+                    if max(bboxes[j_bbox][4:]) > max(bboxes[i_bbox][4:]):
+                        bboxes[i_bbox] = np.zeros(num_dim + num_class)
+                    else:
+                        bboxes[j_bbox] = np.zeros(num_dim + num_class)
+
+    # Clean all removed boxes and convert to location and confidence.
+    bboxes = bboxes[~np.all(bboxes == 0, axis=1)]
+    bbox_locs = torch.Tensor(bboxes[:, 0:4])
+    bbox_confid_scores = torch.Tensor(bboxes[:, 4:])
+
+    return bbox_locs, bbox_confid_scores
 
 
 ''' Bounding Box Conversion --------------------------------------------------------------------------------------------
@@ -265,19 +346,31 @@ def bbox2loc(bbox, priors, center_var=0.1, size_var=0.2):
 
 def center2corner(center):
     """
-    Convert bounding box in center form (cx, cy, w, h) to corner form (x,y) (x+w, y+h).
+    Convert bounding box in center form (cx, cy, w, h) to corner form (nw_x, nw_y, sw_x, sw_y).
     :param center: bounding box in center form (cx, cy, w, h).
-    :return: bounding box in corner form (x,y) (x+w, y+h).
+    :return: bounding box in corner form (nw_x, nw_y, sw_x, sw_y).
     """
-    return torch.cat([center[..., :2] - center[..., 2:]/2,
-                      center[..., :2] + center[..., 2:]/2], dim=-1)
+    if isinstance(center, torch.Tensor):
+        center = torch.Tensor.tolist(center)
+    cx = center[0]
+    cy = center[1]
+    w = center[2]
+    h = center[3]
+
+    return [cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2.]
 
 
 def corner2center(corner):
     """
-    Convert bounding box in center form (cx, cy, w, h) to corner form (x,y) (x+w, y+h).
-    :param center: bounding box in center form (cx, cy, w, h)
-    :return: bounding box in corner form (x,y) (x+w, y+h)
+    Convert bounding box in corner form (nw_x, nw_y, se_x, se_y) to center form (cx, cy, w, h).
+    :param corner: bounding box in corner form (nw_x, nw_y, sw_x, sw_y)
+    :return: bounding box in center form (cx, cy, w, h)
     """
-    return torch.cat([corner[..., :2] - corner[..., 2:]/2,
-                      corner[..., :2] + corner[..., 2:]/2], dim=-1)
+    if isinstance(corner, torch.Tensor):
+        corner = torch.Tensor.tolist(corner)
+    nw_x = corner[0]
+    nw_y = corner[1]
+    se_x = corner[2]
+    se_y = corner[3]
+
+    return [(se_x + nw_x) / 2., (se_y + nw_y) / 2., se_x - nw_x, se_y - nw_y]
