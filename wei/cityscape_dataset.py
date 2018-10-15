@@ -15,7 +15,7 @@ import bbox_helper
 class CityScapeDataset(Dataset):
     classes = ['car', 'cargroup', 'person', 'persongroup', 'traffic sign']
     cropping_ios_threshold = 0.5
-    matching_iou_threshold = 0.4
+    matching_iou_threshold = 0.5
     random_brighten_ratio = 0.8
     num_prior_bbox, imgWidth, imgHeight, crop_coordinate = None, None, None, None
 

@@ -27,13 +27,13 @@ if __name__ == '__main__':
             data_list[i_data] = json.load(file)
             data_list[i_data]['file'] = file_list[i_data]
 
-    random.shuffle(data_list)
+    # random.shuffle(data_list) TODO:
 
     # Create dataset.
     dataset = cityscape_dataset.CityScapeDataset(data_list)
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True, num_workers=6)
 
-    dataset.preview(15)
+    # dataset.preview(20)
 
     # Losses collection, used for monitoring over-fit.
     train_losses = []
@@ -42,7 +42,7 @@ if __name__ == '__main__':
     max_epochs = 10
     itr = 0
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
-    criterion = bbox_loss.MultiboxLoss()
+    criterion = None # bbox_loss.MultiboxLoss(None)
 
     for epoch_idx in range(0, max_epochs):
         for train_batch_idx, (train_input, train_oracle) in enumerate(data_loader):
@@ -55,10 +55,13 @@ if __name__ == '__main__':
 
             # Forward.
             train_input = Variable(train_input.cuda())  # Use Variable(*) to allow gradient flow.
-            train_out = net.forward(train_input)  # Forward once.
+            train_out = net.forward(train_input)        # Forward once.
 
             # Compute loss.
             train_oracle = Variable(train_oracle.cuda())
+            print(len(train_out))
+            print(len(train_oracle))
+            os.system("pause")
             loss = criterion(train_out, train_oracle)
 
             # Do the backward and compute gradients.
