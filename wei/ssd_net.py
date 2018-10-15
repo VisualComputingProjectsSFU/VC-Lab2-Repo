@@ -6,7 +6,7 @@ from mobile_net import MobileNet
 
 
 class SsdNet(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, num_prior_bbox):
         super(SsdNet, self).__init__()
         self.num_classes = num_classes
 
@@ -14,10 +14,10 @@ class SsdNet(nn.Module):
         self.base_net = MobileNet()
 
         # The feature map will extracted from the end of following layers sections in (base_net).
-        self.base_output_sequence_indices = (0, 6, 12, len(self.base_net.base_net))
+        self.base_output_sequence_indices = (0, 4, 6, 12, len(self.base_net.base_net))
 
         # Number of prior bounding box.
-        self.num_prior_bbox = 4
+        self.num_prior_bbox = num_prior_bbox
 
         # Define the additional feature extractor.
         self.additional_feature_extractor = nn.ModuleList([
@@ -148,7 +148,6 @@ class SsdNet(nn.Module):
         locations = torch.cat(loc_list, 1)
 
         # [Debug] Check the output.
-        print(confidences.shape)
         assert confidences.dim() == 3                       # Should be (N, num_priors, num_classes).
         assert confidences.shape[2] == self.num_classes     # Should be (N, num_priors, num_classes).
         assert locations.dim() == 3                         # Should be (N, num_priors, 4).

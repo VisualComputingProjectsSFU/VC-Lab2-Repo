@@ -13,34 +13,30 @@ import bbox_helper
 
 
 class CityScapeDataset(Dataset):
+    classes = ['car', 'cargroup', 'person', 'persongroup', 'traffic sign']
+    cropping_ios_threshold = 0.5
+    matching_iou_threshold = 0.4
+    random_brighten_ratio = 0.8
+    num_prior_bbox, imgWidth, imgHeight, crop_coordinate = None, None, None, None
+
     def __init__(self, dataset_list):
         self.dataset_list = dataset_list
-        self.classes = ['car', 'cargroup', 'person', 'persongroup', 'traffic sign']
-        self.cropping_threshold = 0.5
 
         # Initialize variables.
-        self.imgWidth = None
-        self.imgHeight = None
-        self.crop_coordinate = None
-
-        prior_layer_cfg = [
-            {'layer_name': 'Layer11',
-             'feature_dim_hw': (38, 38), 'bbox_size': (60, 60), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer23',
-             'feature_dim_hw': (19, 19), 'bbox_size': (95, 95), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer27',
-             'feature_dim_hw': (10, 10), 'bbox_size': (130, 130), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer29',
-             'feature_dim_hw': (5, 5), 'bbox_size': (165, 165), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer31',
-             'feature_dim_hw': (3, 3), 'bbox_size': (200, 200), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer33',
-             'feature_dim_hw': (2, 2), 'bbox_size': (235, 235), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-            {'layer_name': 'Layer35',
-             'feature_dim_hw': (1, 1), 'bbox_size': (270, 270), 'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)}
+        ratio = (1.0, 1 / 2, 1 / 3, 1 / 4, 2.0, 3.0, 4.0)
+        self.num_prior_bbox = len(ratio) + 1
+        self.prior_layer_cfg = [
+            {'layer_name': 'Layer7', 'feature_dim_hw': (75, 75), 'bbox_size': (7.5, 7.5), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer11', 'feature_dim_hw': (38, 38), 'bbox_size': (40.71, 40.71), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer23', 'feature_dim_hw': (19, 19), 'bbox_size': (73.93, 73.93), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer27', 'feature_dim_hw': (10, 10), 'bbox_size': (107.14, 107.14), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer29', 'feature_dim_hw': (5, 5), 'bbox_size': (140.36, 140.36), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer31', 'feature_dim_hw': (3, 3), 'bbox_size': (173.57, 173.57), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer33', 'feature_dim_hw': (2, 2), 'bbox_size': (206.79, 206.79), 'aspect_ratio': ratio},
+            {'layer_name': 'Layer35', 'feature_dim_hw': (1, 1), 'bbox_size': (240, 240), 'aspect_ratio': ratio}
         ]
 
-        self.prior_bboxes = bbox_helper.generate_prior_bboxes(prior_layer_cfg=prior_layer_cfg)
+        self.prior_bboxes = bbox_helper.generate_prior_bboxes(prior_layer_cfg=self.prior_layer_cfg)
 
         # Pre-process parameters, normalize: (I-self.mean)/self.std.
         self.mean = np.asarray((127, 127, 127))
@@ -73,49 +69,28 @@ class CityScapeDataset(Dataset):
 
         # Prepare image array first to update crop.
         image = self.crop(image)
-        image = self.flip(image)
         image = self.brighten(image)
         image = self.normalize(image)
         image = np.array(image)
+        image = torch.Tensor(image)
 
         # Prepare labels second to apply crop.
-        labels = self.crop(self.raw_labels)
-        labels = self.flip(labels)
-        labels = self.normalize(labels)
+        self.raw_labels = self.crop(self.raw_labels)
+        labels = self.normalize(self.raw_labels)
         labels = np.array(labels)
 
-        # TODO: implement data loading
-        # 1. Load image as well as the bounding box with its label
-        # 2. Normalize the image with self.mean and self.std
-        # 4. Normalize the bounding box position value from 0 to 1
+        # Do the matching prior and generate ground-truth labels as well as the boxes.
+        self.oracle_labels = labels
+        labels = bbox_helper.match_priors(self.prior_bboxes, labels, iou_threshold=self.matching_iou_threshold)
 
-        fig, ax = plt.subplots(1)
-        ax.imshow(image)
-        for i in range(labels.shape[0]):
-            corner = bbox_helper.center2corner(labels[i, len(self.classes):])
-            x = corner[0]
-            y = corner[1]
-            rect = patches.Rectangle((x, y), labels[i][len(self.classes) + 2], labels[i][len(self.classes) + 3], linewidth=1, edgecolor='r', facecolor='none')
-            ax.add_patch(rect)
-        plt.show()
+        confidences = labels[:, :len(self.classes)]
+        confidences = np.array(confidences)
+        confidences = torch.Tensor(confidences)
+        locations = labels[:, len(self.classes):]
+        locations = np.array(locations)
+        locations = torch.Tensor(locations)
 
-        sample_labels = None
-        sample_bboxes = None
-        sample_img = None
-
-        # 4. Do the augmentation if needed. e.g. random clip the bounding box or flip the bounding box
-        # 5. Do the matching prior and generate ground-truth labels as well as the boxes
-        bbox_tensor, bbox_label_tensor = bbox_helper.match_priors(self.prior_bboxes, sample_bboxes, sample_labels, iou_threshold=0.5)
-
-        # [DEBUG] check the output.
-        assert isinstance(bbox_label_tensor, torch.Tensor)
-        assert isinstance(bbox_tensor, torch.Tensor)
-        assert bbox_tensor.dim() == 2
-        assert bbox_tensor.shape[1] == 4
-        assert bbox_label_tensor.dim() == 1
-        assert bbox_label_tensor.shape[0] == bbox_tensor.shape[0]
-
-        return bbox_tensor, bbox_label_tensor
+        return image, confidences, locations
 
     def sanitize(self, item):
         labels = []
@@ -155,7 +130,7 @@ class CityScapeDataset(Dataset):
         if isinstance(inp, PIL.Image.Image):
             image = inp
 
-            # Check the iosmall of the cropped image with oracle bounding box to ensure at least one labeled item.
+            # Check the ios of the cropped image with oracle bounding box to ensure at least one labeled item.
             found = False
             while not found:
                 crop = random.randint(0, self.imgWidth - 301)
@@ -164,7 +139,7 @@ class CityScapeDataset(Dataset):
                     a = torch.Tensor([label[-4:]])
                     b = torch.Tensor([bbox_helper.corner2center(self.crop_coordinate)])
 
-                    if bbox_helper.ios(a, b) > self.cropping_threshold:
+                    if bbox_helper.ios(a, b) > self.cropping_ios_threshold:
                         found = True
                         image = image.crop(self.crop_coordinate)
                         break
@@ -177,7 +152,7 @@ class CityScapeDataset(Dataset):
 
         # Remove label with too small ios.
         ios = bbox_helper.ios(torch.Tensor(labels[:, len(self.classes):]), torch.Tensor([[150, 150, 300, 300]]))
-        labels[np.where(ios <= self.cropping_threshold)] = 0
+        labels[np.where(ios <= self.cropping_ios_threshold)] = 0
         labels = labels[~np.all(labels == 0, axis=1)]
 
         # Clip the label.
@@ -192,24 +167,43 @@ class CityScapeDataset(Dataset):
 
         return labels
 
-    def flip(self, inp):
-        return inp
-
-    def brighten(self, inp):
-        return inp
+    def brighten(self, image):
+        sign = [-1, 1][random.randrange(2)]
+        img = np.multiply(image, (1 + sign * (random.uniform(0, self.random_brighten_ratio))))
+        return img.clip(0, 255)
 
     def normalize(self, inp):
         # Case for image input.
         if inp.shape == (300, 300, 3):
-            print(inp[0][0])
             image = inp
             image = np.subtract(image, self.mean)
-            print(image[0][0])
+            image = np.true_divide(image, self.std)
 
             return image
 
         # Case for label input.
         labels = inp
+        classes = labels[:, 0:len(self.classes)]
+        bboxes = labels[:, len(self.classes):]
+        labels = np.concatenate((classes, np.true_divide(bboxes, 300.)), axis=1)
+
+        return labels
+
+    def denormalize(self, inp):
+        # Denormalize the image.
+        inp = np.array(inp, dtype=float)
+        if inp.shape == (300, 300, 3):
+            image = inp
+            image = np.multiply(image, self.std)
+            image = np.add(image, self.mean)
+
+            return image.astype(int)
+
+        # Denormalize the landmarks.
+        labels = inp
+        classes = labels[:, :len(self.classes)]
+        bboxes = labels[:, len(self.classes):]
+        labels = np.concatenate((classes, np.multiply(bboxes, 300.)), axis=1)
 
         return labels
 
@@ -217,3 +211,63 @@ class CityScapeDataset(Dataset):
         if index == -1:
             index = random.randint(0, len(self.dataset_list))
 
+        # Acquire preview targets.
+        image, confidences, locations = self[index]
+        image = np.array(image)
+        labels = np.concatenate((np.array(confidences), np.array(locations)), axis=1)
+
+        # Denormalize the data.
+        image = self.denormalize(image)
+        labels = self.denormalize(labels)
+
+        # Remove labels with no matched class.
+        for i_label in range(labels.shape[0]):
+            if np.max(labels[i_label, 0:-4]) == 0:
+                labels[i_label] = 0
+        labels = labels[~np.all(labels == 0, axis=1)]
+
+        fig, ax = plt.subplots(1)
+        ax.imshow(image)
+
+        matched_rect, oracle_rect = None, None
+        # Display matched bounding boxes.
+        for i_label in range(labels.shape[0]):
+            corner = bbox_helper.center2corner(labels[i_label, len(self.classes):])
+            x = corner[0]
+            y = corner[1]
+            matched_rect = patches.Rectangle(
+                (x, y),
+                labels[i_label][len(self.classes) + 2],
+                labels[i_label][len(self.classes) + 3],
+                linewidth=1, edgecolor='r', facecolor='none')
+            ax.add_patch(matched_rect)
+
+        # Display ground truth bounding boxes.
+        for i_label in range(self.raw_labels.shape[0]):
+            corner = bbox_helper.center2corner(self.raw_labels[i_label, len(self.classes):])
+            x = corner[0]
+            y = corner[1]
+            oracle_rect = patches.Rectangle(
+                (x, y),
+                self.raw_labels[i_label][len(self.classes) + 2],
+                self.raw_labels[i_label][len(self.classes) + 3],
+                linewidth=1, edgecolor='g', facecolor='none')
+            ax.add_patch(oracle_rect)
+
+        fig.canvas.set_window_title('Preview at Index [' + str(index) + ']')
+        plt.title('Preview at Index [' + str(index) + ']')
+        plt.xlim(0, 300)
+        plt.ylim(300, 0)
+        plt.legend([oracle_rect, matched_rect],
+                   ['Oracle Box', 'Matched Box'],
+                   bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+        plt.tight_layout()
+
+        # Output stats.
+        print('Available classes:', self.classes)
+        print('Number of oracle bounding boxes:', self.raw_labels.shape[0])
+        print('Number of matched bounding boxes:', labels.shape[0])
+        print('Bounding box configuration:')
+        print(np.array(self.prior_layer_cfg))
+
+        plt.show()

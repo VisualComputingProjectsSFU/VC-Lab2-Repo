@@ -70,8 +70,7 @@ def summary_layers(model, input_size):
             hooks.append(reg_module.register_forward_hook(hook))
 
     if torch.cuda.is_available():
-        # dtype = torch.cuda.FloatTensor =============================================================================
-        dtype = torch.FloatTensor
+        dtype = torch.cuda.FloatTensor
     else:
         dtype = torch.FloatTensor
 

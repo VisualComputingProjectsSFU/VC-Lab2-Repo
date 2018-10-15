@@ -5,6 +5,9 @@ import math
 ''' Prior Bounding Box  ------------------------------------------------------------------------------------------------
 '''
 
+s_min = 0.025
+s_max = 0.8
+
 
 def generate_prior_bboxes(prior_layer_cfg):
     """
@@ -16,12 +19,12 @@ def generate_prior_bboxes(prior_layer_cfg):
     Use MobileNet_SSD 300x300 as example:
     Feature map dimension for each output layers:
        Layer    | Map Dim (h, w) | Single bbox size that covers in the original image
-    1. 11       | (38x38)        | (60x60) (unit. pixels)
-    2. 23       | (19x19)        | (95x95)
-    3. 27       | (10x10)        | (130x130)
-    4. 29       | (5x5)          | (165x165)
-    5. 31       | (3x3)          | (200x200)
-    6. 33       | (2x2)          | (235x235)
+    1. 11       | (38x38)        | (30x30) (unit. pixels)
+    2. 23       | (19x19)        | (70x70)
+    3. 27       | (10x10)        | (110x110)
+    4. 29       | (5x5)          | (150x150)
+    5. 31       | (3x3)          | (190x190)
+    6. 33       | (2x2)          | (230x230)
     7. 35       | (1x1)          | (270x270)
     NOTE: The setting may be different using MobileNet v3, you have to set your own implementation.
     Tip: see the reference: 'Choosing scales and aspect ratios for default boxes' in original paper page 5.
@@ -36,8 +39,6 @@ def generate_prior_bboxes(prior_layer_cfg):
 
     # Configuration parameters.
     priors_bboxes = []
-    s_min = 0.2
-    s_max = 0.9
     m = len(prior_layer_cfg)
 
     for k in range(1, m):
@@ -70,12 +71,9 @@ def generate_prior_bboxes(prior_layer_cfg):
                     priors_bboxes.append([cx, cy, w, h])
 
     # Convert to Tensor.
-    priors_bboxes = torch.Tensor(priors_bboxes)
-    priors_bboxes = torch.clamp(priors_bboxes, 0.0, 1.0)
+    priors_bboxes = np.array(priors_bboxes)
+    priors_bboxes = np.clip(priors_bboxes, 0.0, 1.0)
 
-    # [DEBUG] Check the output shape.
-    assert priors_bboxes.dim() == 2
-    assert priors_bboxes.shape[1] == 4
     return priors_bboxes
 
 
@@ -173,48 +171,31 @@ def ios(a: torch.Tensor, b: torch.Tensor):
 
 
 def match_priors(
-        prior_bboxes: torch.Tensor,
-        oracle_bboxes: torch.Tensor,
-        oracle_labels: torch.Tensor,
+        bboxes: np.ndarray,
+        labels: np.ndarray,
         iou_threshold: float):
     """
     Match the ground-truth boxes with the priors. Used in cityscape_dataset.py.
 
-    :param oracle_bboxes: ground-truth bounding boxes, dim: (n_samples, 4).
-    :param oracle_labels: ground-truth classification labels, negative (background) = 0, dim: (n_samples).
-    :param prior_bboxes: prior bounding boxes on different levels, dim: (num_priors, 4).
+    :param bboxes: bounding boxes, dim: (num_sample, 4).
+    :param labels: label vector with attached bounding box, dim: (num_match, num_class + 4).
     :param iou_threshold: matching criterion.
-    :return matched_boxes: real matched bounding box, dim: (num_priors, 4).
-    :return matched_labels: real matched classification label, dim: (num_priors).
+    :return labels: real matched labels mapped to all bounding boxes, dim: (num_sample, num_class + 4).
     """
-    # [DEBUG] Check if input is the desire shape.
-    assert oracle_bboxes.dim() == 2
-    assert oracle_bboxes.shape[1] == 4
-    assert oracle_labels.dim() == 1
-    assert oracle_labels.shape[0] == oracle_bboxes.shape[0]
-    assert prior_bboxes.dim() == 2
-    assert prior_bboxes.shape[1] == 4
 
-    matched_boxes = []
-    matched_labels = []
-    for i_prior in range(0, prior_bboxes.shape[0]):
-        for i_oracle in range(0, oracle_bboxes[0]):
-            iou_score = iou(prior_bboxes[i_prior], oracle_bboxes[i_oracle])
-            if iou_score > iou_threshold:
-                matched_boxes.append(prior_bboxes[i_prior])
-                matched_labels.append(oracle_labels[i_oracle])
+    class_zeros = np.zeros((bboxes.shape[0], labels.shape[1] - 4))
+    bboxes = np.concatenate((class_zeros, bboxes), axis=1)
 
-    matched_boxes = torch.Tensor(matched_boxes)
-    matched_labels = torch.Tensor(matched_labels)
-    matched_boxes = matched_boxes.view(matched_boxes.shape[0] / 4, 4)
+    for i_prior in range(bboxes.shape[0]):
+        for i_oracle in range(labels.shape[0]):
+            a = torch.Tensor(bboxes[i_prior, -4:]).unsqueeze(0)
+            b = torch.Tensor(labels[i_oracle, -4:]).unsqueeze(0)
+            iou_score = iou(a, b)
 
-    # [DEBUG] Check if output is the desire shape.
-    assert matched_boxes.dim() == 2
-    assert matched_boxes.shape[1] == 4
-    assert matched_labels.dim() == 1
-    assert matched_labels.shape[0] == matched_boxes.shape[0]
+            if iou_score[0] > iou_threshold:
+                bboxes[i_prior, 0:-4] = labels[i_oracle, 0:-4]
 
-    return matched_boxes, matched_labels
+    return np.array(bboxes)
 
 
 ''' NMS ----------------------------------------------------------------------------------------------------------------

@@ -32,7 +32,7 @@ class MobileNet(nn.Module):
             conv_dw(32, 64, 1),         # Layer 2 - 3   Seq 2       150x150x64
 
             conv_dw(64, 128, 2),        # Layer 4 - 5   Seq 3       75x75x128
-            conv_dw(128, 128, 1),       # Layer 6 - 7   Seq 4       75x75x128
+            conv_dw(128, 128, 1),       # Layer 6 - 7   Seq 4       75x75x128   <- Regressor & Classifier
 
             conv_dw(128, 256, 2),       # Layer 8 - 9   Seq 5       38x38x256
             conv_dw(256, 256, 1),       # Layer 10 - 11 Seq 6       38x38x256   <- Regressor & Classifier
@@ -47,7 +47,7 @@ class MobileNet(nn.Module):
             conv_dw(512, 1024, 2),      # Layer 24 - 25 Seq 13      10x10x1024
             conv_dw(1024, 1024, 1)      # Layer 26 - 27 Seq 14      10x10x1024  <- Regressor & Classifier
 
-                                        # Layer 8 (FC Removed)
+                                        # Layer 28 (FC Removed)
         )
 
     def forward(self, x):
