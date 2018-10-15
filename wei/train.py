@@ -27,13 +27,9 @@ if __name__ == '__main__':
             data_list[i_data] = json.load(file)
             data_list[i_data]['file'] = file_list[i_data]
 
-    # random.shuffle(data_list) TODO:
-
     # Create dataset.
     dataset = cityscape_dataset.CityScapeDataset(data_list)
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True, num_workers=6)
-
-    # dataset.preview(20)
 
     # Losses collection, used for monitoring over-fit.
     train_losses = []
@@ -42,11 +38,12 @@ if __name__ == '__main__':
     max_epochs = 10
     itr = 0
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
-    criterion = None # bbox_loss.MultiboxLoss(None)
+    criterion = None  # bbox_loss.MultiboxLoss(None)
 
     for epoch_idx in range(0, max_epochs):
         for train_batch_idx, (train_input, train_oracle) in enumerate(data_loader):
             itr += 1
+
             net.train()
             net.cuda()
 

@@ -21,6 +21,7 @@ class CityScapeDataset(Dataset):
 
     def __init__(self, dataset_list):
         self.dataset_list = dataset_list
+        self.prepared_index = 1
 
         # Initialize variables.
         ratio = (1.0, 1 / 2, 1 / 3, 1 / 4, 2.0, 3.0, 4.0)
@@ -55,6 +56,11 @@ class CityScapeDataset(Dataset):
         :return bbox_tensor: matched bounding box, dim: (num_priors, 4).
         :return bbox_label: matched classification label, dim: (num_priors).
         """
+        # Alert current dataset status.
+        current_instance = '[' + str(self.prepared_index) + '/' + str(len(self.dataset_list)) + ']'
+        current_percentage = '[{:.2f}%]'.format(self.prepared_index * 1.0 / len(self.dataset_list))
+        print('Preparing dataset at index [' + str(idx) + ']' + current_instance + current_percentage)
+
         # Prepare configurations.
         item = self.dataset_list[idx]
         self.imgWidth = float(item['imgWidth'])
@@ -89,6 +95,8 @@ class CityScapeDataset(Dataset):
         locations = labels[:, len(self.classes):]
         locations = np.array(locations)
         locations = torch.Tensor(locations)
+
+        self.prepared_index += 1
 
         return image, confidences, locations
 
