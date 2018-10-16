@@ -1,14 +1,13 @@
 import torch
 import numpy as np
 import math
+import cityscape_dataset
 
 ''' Prior Bounding Box  ------------------------------------------------------------------------------------------------
 '''
 
-s_min = 0.025
-s_max = 0.8
 
-
+# noinspection PyUnresolvedReferences
 def generate_prior_bboxes(prior_layer_cfg):
     """
     Generate prior bounding boxes on different feature map level. This function used in 'cityscape_dataset.py'
@@ -47,6 +46,9 @@ def generate_prior_bboxes(prior_layer_cfg):
         layer_feature_dim = layer_cfg['feature_dim_hw']
         layer_aspect_ratio = layer_cfg['aspect_ratio']
 
+        s_min = cityscape_dataset.CityScapeDataset.s_min
+        s_max = cityscape_dataset.CityScapeDataset.s_max
+
         sk = s_min + (s_max - s_min)/(m - 1) * (k - 1)
         fk = layer_cfg['bbox_size'][0]
 
@@ -71,8 +73,8 @@ def generate_prior_bboxes(prior_layer_cfg):
                     priors_bboxes.append([cx, cy, w, h])
 
     # Convert to Tensor.
-    priors_bboxes = np.array(priors_bboxes)
-    priors_bboxes = np.clip(priors_bboxes, 0.0, 1.0)
+    priors_bboxes = torch.Tensor(priors_bboxes).cuda()
+    priors_bboxes = torch.clamp(priors_bboxes, 0.0, 1.0)
 
     return priors_bboxes
 
@@ -93,21 +95,19 @@ def iou(a: torch.Tensor, b: torch.Tensor):
 
     # Handle the case if b is a reference.
     if b.shape[0] == 1 and a.shape[0] > 1:
-        ndb = np.array(b)
-        ndb = ndb.repeat(a.shape[0], axis=0)
-        b = torch.Tensor(ndb)
+        b = b.repeat(a.shape[0], 1)
 
     # Decide the relationship and compute IoU.
     iou_list = []
+    box1 = center2corner(a)
+    box2 = center2corner(b)
     for index in range(0, a.shape[0]):
 
         # Compute the intersection.
-        box1 = center2corner(a[index])
-        box2 = center2corner(b[index])
-        x1 = max(box1[0], box2[0])
-        y1 = max(box1[1], box2[1])
-        x2 = min(box1[2], box2[2])
-        y2 = min(box1[3], box2[3])
+        x1 = max(box1[index][0], box2[index][0])
+        y1 = max(box1[index][1], box2[index][1])
+        x2 = min(box1[index][2], box2[index][2])
+        y2 = min(box1[index][3], box2[index][3])
 
         if x1 > x2 or y1 > y2:
             intersection = 0
@@ -120,7 +120,7 @@ def iou(a: torch.Tensor, b: torch.Tensor):
 
         iou_list.append(intersection / (area_a + area_b - intersection))
 
-    iou_tensor = torch.Tensor(iou_list)
+    iou_tensor = torch.Tensor(iou_list).cuda()
 
     # [DEBUG] Check if output is the desire shape.
     assert iou_tensor.dim() == 1
@@ -133,9 +133,8 @@ def ios(a: torch.Tensor, b: torch.Tensor):
     # Compute the intersection over smaller object.
     :param a: area, dim: (n_items, 4).
     :param b: area, dim: (n_items, 4).
-    :return: intersection over smaller value: dim: (n_item).
+    :return: intersection over smaller value: dim: (n_items).
     """
-
     # Handle the case if b is a reference.
     if b.shape[0] == 1 and a.shape[0] > 1:
         ndb = np.array(b)
@@ -144,15 +143,15 @@ def ios(a: torch.Tensor, b: torch.Tensor):
 
     # Decide the relationship and compute.
     ios_list = []
+    box1 = center2corner(a)
+    box2 = center2corner(b)
     for index in range(0, a.shape[0]):
 
         # Compute the intersection.
-        box1 = center2corner(a[index])
-        box2 = center2corner(b[index])
-        x1 = max(box1[0], box2[0])
-        y1 = max(box1[1], box2[1])
-        x2 = min(box1[2], box2[2])
-        y2 = min(box1[3], box2[3])
+        x1 = max(box1[index][0], box2[index][0])
+        y1 = max(box1[index][1], box2[index][1])
+        x2 = min(box1[index][2], box2[index][2])
+        y2 = min(box1[index][3], box2[index][3])
 
         if x1 > x2 or y1 > y2:
             intersection = 0
@@ -165,37 +164,35 @@ def ios(a: torch.Tensor, b: torch.Tensor):
 
         ios_list.append(intersection / min(area_a, area_b))
 
-    ios_tensor = torch.Tensor(ios_list)
+    ios_tensor = torch.Tensor(ios_list).cuda()
 
     return ios_tensor
 
 
 def match_priors(
-        bboxes: np.ndarray,
-        labels: np.ndarray,
+        bboxes: torch.Tensor,
+        labels: torch.Tensor,
         iou_threshold: float):
     """
     Match the ground-truth boxes with the priors. Used in cityscape_dataset.py.
-
     :param bboxes: bounding boxes, dim: (num_sample, 4).
     :param labels: label vector with attached bounding box, dim: (num_match, num_class + 4).
     :param iou_threshold: matching criterion.
     :return labels: real matched labels mapped to all bounding boxes, dim: (num_sample, num_class + 4).
     """
-
-    class_zeros = np.zeros((bboxes.shape[0], labels.shape[1] - 4))
-    bboxes = np.concatenate((class_zeros, bboxes), axis=1)
+    class_zeros = torch.zeros(bboxes.shape[0], labels.shape[1] - 4)
 
     for i_prior in range(bboxes.shape[0]):
-        for i_oracle in range(labels.shape[0]):
-            a = torch.Tensor(bboxes[i_prior, -4:]).unsqueeze(0)
-            b = torch.Tensor(labels[i_oracle, -4:]).unsqueeze(0)
-            iou_score = iou(a, b)
+        a = (bboxes[i_prior, -4:]).unsqueeze(0)
+        b = labels[-4:]
 
-            if iou_score[0] > iou_threshold:
-                bboxes[i_prior, 0:-4] = labels[i_oracle, 0:-4]
+        iou_score = iou(b, a)
+        value, index = iou_score.max(0)
 
-    return np.array(bboxes)
+        if value > iou_threshold:
+            class_zeros[i_prior] = labels[index, 0:-4]
+
+    return torch.cat((class_zeros, bboxes), 1)
 
 
 ''' NMS ----------------------------------------------------------------------------------------------------------------
@@ -272,86 +269,21 @@ def nms_bbox(bbox_locs, bbox_confid_scores, overlap_threshold=0.5, prob_threshol
 '''
 
 
-def loc2bbox(loc, priors, center_var=0.1, size_var=0.2):
-    """
-    Compute SSD predicted locations to boxes(cx, cy, h, w).
-    :param loc: predicted location, dim: (N, num_priors, 4).
-    :param priors: default prior boxes, dim: (1, num_prior, 4).
-    :param center_var: scale variance of the bounding box center point.
-    :param size_var: scale variance of the bounding box size.
-    :return: boxes: (cx, cy, h, w).
-    """
-    assert priors.shape[0] == 1
-    assert priors.dim() == 3
-
-    # Prior bounding boxes.
-    p_center = priors[..., :2]
-    p_size = priors[..., 2:]
-
-    # Locations.
-    l_center = loc[..., :2]
-    l_size = loc[..., 2:]
-
-    # Real bounding box.
-    return torch.cat([
-        center_var * l_center * p_size + p_center,      # b_{center}
-        p_size * torch.exp(size_var * l_size)           # b_{size}
-    ], dim=-1)
-
-
-def bbox2loc(bbox, priors, center_var=0.1, size_var=0.2):
-    """
-    Compute boxes (cx, cy, h, w) to SSD locations form.
-    :param bbox: bounding box (cx, cy, h, w) , dim: (N, num_priors, 4).
-    :param priors: default prior boxes, dim: (1, num_prior, 4).
-    :param center_var: scale variance of the bounding box center point.
-    :param size_var: scale variance of the bounding box size.
-    :return: loc: (cx, cy, h, w).
-    """
-    assert priors.shape[0] == 1
-    assert priors.dim() == 3
-
-    # Prior bounding boxes.
-    p_center = priors[..., :2]
-    p_size = priors[..., 2:]
-
-    # Locations.
-    b_center = bbox[..., :2]
-    b_size = bbox[..., 2:]
-
-    return torch.cat([
-        1 / center_var * ((b_center - p_center) / p_size),
-        torch.log(b_size / p_size) / size_var
-    ], dim=-1)
-
-
 def center2corner(center):
     """
-    Convert bounding box in center form (cx, cy, w, h) to corner form (nw_x, nw_y, sw_x, sw_y).
+    Convert bounding box in center form (cx, cy, w, h) to corner form (x, y) (x + w, y + h).
     :param center: bounding box in center form (cx, cy, w, h).
-    :return: bounding box in corner form (nw_x, nw_y, sw_x, sw_y).
+    :return: bounding box in corner form (x, y) (x + w, y + h).
     """
-    if isinstance(center, torch.Tensor):
-        center = torch.Tensor.tolist(center)
-    cx = center[0]
-    cy = center[1]
-    w = center[2]
-    h = center[3]
-
-    return [cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2.]
+    return torch.cat([center[..., :2] - center[..., 2:] / 2,
+                      center[..., :2] + center[..., 2:] / 2], dim=-1)
 
 
 def corner2center(corner):
     """
-    Convert bounding box in corner form (nw_x, nw_y, se_x, se_y) to center form (cx, cy, w, h).
-    :param corner: bounding box in corner form (nw_x, nw_y, sw_x, sw_y)
-    :return: bounding box in center form (cx, cy, w, h)
+    Convert bounding box from corner form (x, y) (x + w, y + h) to  center form (cx, cy, w, h).
+    :param corner: bounding box in corner form (x, y) (x + w, y + h).
+    :return: bounding box in center form (cx, cy, w, h).
     """
-    if isinstance(corner, torch.Tensor):
-        corner = torch.Tensor.tolist(corner)
-    nw_x = corner[0]
-    nw_y = corner[1]
-    se_x = corner[2]
-    se_y = corner[3]
-
-    return [(se_x + nw_x) / 2., (se_y + nw_y) / 2., se_x - nw_x, se_y - nw_y]
+    return torch.cat([corner[..., 2:] + corner[..., :2] / 2,
+                      corner[..., 2:] - corner[..., :2]], dim=-1)
