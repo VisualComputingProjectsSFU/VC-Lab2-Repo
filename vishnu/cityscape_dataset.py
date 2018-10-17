@@ -34,15 +34,13 @@ class CityScapeDataset(Dataset):
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
                            {'layer_name': 'Conv11', 'feature_dim_hw': (19, 19), 'bbox_size': (60, 60),
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-                           {'layer_name': 'Conv13', 'feature_dim_hw': (10, 10), 'bbox_size': (102, 102),
+                           {'layer_name': 'Conv13', 'feature_dim_hw': (10, 10), 'bbox_size': (111, 111),
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-                           {'layer_name': 'Conv14_2', 'feature_dim_hw': (5, 5), 'bbox_size': (144, 144),
+                           {'layer_name': 'Conv14_2', 'feature_dim_hw': (5, 5), 'bbox_size': (162, 162),
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-                           {'layer_name': 'Conv15_2', 'feature_dim_hw': (3, 3), 'bbox_size': (186, 186),
+                           {'layer_name': 'Conv15_2', 'feature_dim_hw': (3, 3), 'bbox_size': (213, 213),
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-                           {'layer_name': 'Conv16_2', 'feature_dim_hw': (2, 2), 'bbox_size': (228, 228),
-                            'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)},
-                           {'layer_name': 'Conv17_2', 'feature_dim_hw': (1, 1), 'bbox_size': (270, 270),
+                           {'layer_name': 'Conv16_2', 'feature_dim_hw': (1, 1), 'bbox_size': (264, 264),
                             'aspect_ratio': (1.0, 1 / 2, 1 / 3, 2.0, 3.0)}
                            ]
         self.prior_bboxes = generate_prior_bboxes(prior_layer_cfg)
@@ -72,28 +70,30 @@ class CityScapeDataset(Dataset):
         #    center form: [(center_x, center_y, w, h)]
         # 4. Normalize the bounding box position value from 0 to 1
         item = self.dataset_list[idx]
-        self.image_path = item['image_path']
-        self.labels = np.asarray(item['labels'])
-        self.labels = torch.Tensor(self.labels)
-        self.bboxes = item['bboxes']
-        self.bboxes = torch.Tensor(np.asarray(item['bboxes'], dtype=np.float32))
-        print(self.bboxes.shape)
+        image_path = item['image_path']
+        labels = np.asarray(item['labels'])
+        labels = torch.Tensor(labels).cuda()
+        bboxes = torch.Tensor(item['bboxes']).cuda()
+        # print(self.bboxes.shape)
 
-        img = Image.open(self.image_path)
+        img = Image.open(image_path)
 
         w, h = img.size
-        self.bboxes /= torch.Tensor([w, h, w, h]).expand_as(self.bboxes)
+        bboxes /= torch.Tensor([w, h, w, h]).expand_as(bboxes)
 
         # resize image
         img = img.resize((self.image_size, self.image_size), Image.ANTIALIAS)
         # normalize_img
         img = np.asarray(img, dtype=np.float32)
         # normalise the image pixels to (-1,1)
-        img = (img / 255.0) * 2 - 1
+        img = np.subtract(img, self.mean)
+        img = np.divide(img, self.std)
 
         # convert to tensor
         img_tensor = torch.Tensor(img.astype(float))
         img_tensor = img_tensor.view((img.shape[2], img.shape[0], img.shape[1]))
+        img_tensor = img_tensor.cuda()
+
 
         '''
         l_min = 5000
@@ -151,7 +151,7 @@ class CityScapeDataset(Dataset):
         # 4. Do the augmentation if needed. e.g. random clip the bounding box or flip the bounding box
 
         # 5. Do the matching prior and generate ground-truth labels as well as the boxes
-        bbox_tensor, bbox_label_tensor = match_priors(self.prior_bboxes, self.bboxes, self.labels,
+        bbox_tensor, bbox_label_tensor = match_priors(self.prior_bboxes, bboxes, labels,
                                                       iou_threshold=0.5)
 
         # [DEBUG] check the output.

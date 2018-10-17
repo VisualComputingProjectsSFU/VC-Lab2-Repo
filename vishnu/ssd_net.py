@@ -39,14 +39,7 @@ class SSD(nn.Module):
             nn.Sequential(
                 nn.Conv2d(in_channels=256, out_channels=128, kernel_size=1),
                 nn.ReLU(),
-                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1),
-                nn.ReLU()
-            ),
-            # Layer 34 - 35 1x1x256
-            nn.Sequential(
-                nn.Conv2d(in_channels=256, out_channels=128, kernel_size=1),
-                nn.ReLU(),
-                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1),
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1),
                 nn.ReLU()
             )
         ])
@@ -58,7 +51,6 @@ class SSD(nn.Module):
             nn.Conv2d(1024, self.num_prior_bbox * 4, kernel_size=3, padding=1),              # Layer 27
             nn.Conv2d(512, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 29
             nn.Conv2d(256, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 31
-            nn.Conv2d(256, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 33
             nn.Conv2d(256, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 35
         ])
 
@@ -69,7 +61,6 @@ class SSD(nn.Module):
             nn.Conv2d(1024, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),    # Layer 25
             nn.Conv2d(512, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 29
             nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 31
-            nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 33
             nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 35
         ])
 
@@ -83,6 +74,8 @@ class SSD(nn.Module):
         # Overwrite entries in the existing state dict.
         model_dict.update(pretrained_state)
 
+
+
         # Load the new state dict.
         self.base_net.load_state_dict(model_dict)
 
@@ -92,6 +85,7 @@ class SSD(nn.Module):
         self.loc_regressor.apply(init_with_xavier)
         self.classifier.apply(init_with_xavier)
         self.additional_feature_extractor.apply(init_with_xavier)
+
 
     def feature_to_bbox(self, loc_regress_layer, confidence_layer, input_feature):
         """
@@ -148,7 +142,7 @@ class SSD(nn.Module):
         locations = torch.cat(loc_list, 1)
 
         # [Debug] Check the output.
-        print(confidences.shape)
+        #print(confidences.shape)
         assert confidences.dim() == 3                       # Should be (N, num_priors, num_classes).
         assert confidences.shape[2] == self.num_classes     # Should be (N, num_priors, num_classes).
         assert locations.dim() == 3                         # Should be (N, num_priors, 4).
