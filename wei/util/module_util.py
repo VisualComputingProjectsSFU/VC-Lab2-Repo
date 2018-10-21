@@ -17,7 +17,10 @@ def forward_from(module_seq: nn.Sequential,
     :param input_x: input tensor to be forwarded.
     :return: result of forwarding multiple layers.
     """
-    x = input_x
+    if torch.cuda.get_device_name(0) == 'GeForce GTX 670MX':
+        x = input_x
+    else:
+        x = input_x.cuda()
     for layer in module_seq[start_idx: end_index]:
         x = layer(x)
     return x

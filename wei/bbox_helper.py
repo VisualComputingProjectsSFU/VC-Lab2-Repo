@@ -11,36 +11,17 @@ import cityscape_dataset
 def generate_prior_bboxes(prior_layer_cfg):
     """
     Generate prior bounding boxes on different feature map level. This function used in 'cityscape_dataset.py'
-
     According to formula S_k = S_min + (S_max - S_min)/(m - 1) * (k - 1)
     S_min = 0.2; S_max = 0.9; m = 7, # of feature maps will be regressed; k = current feature map between 1 and m.
-
-    Use MobileNet_SSD 300x300 as example:
-    Feature map dimension for each output layers:
-       Layer    | Map Dim (h, w) | Single bbox size that covers in the original image
-    1. 11       | (38x38)        | (30x30) (unit. pixels)
-    2. 23       | (19x19)        | (70x70)
-    3. 27       | (10x10)        | (110x110)
-    4. 29       | (5x5)          | (150x150)
-    5. 31       | (3x3)          | (190x190)
-    6. 33       | (2x2)          | (230x230)
-    7. 35       | (1x1)          | (270x270)
-    NOTE: The setting may be different using MobileNet v3, you have to set your own implementation.
-    Tip: see the reference: 'Choosing scales and aspect ratios for default boxes' in original paper page 5.
     :param prior_layer_cfg: configuration for each feature layer, see the 'example_prior_layer_cfg' in the following.
     :return prior bounding boxes of (cx, cy, w, h), where the value range are from 0 to 1, dim (1, num_priors, 4).
-
-    example_prior_layer_cfg = [
-        {'layer_name': 'Layer11',
-         'feature_dim_hw': (38, 38), 'bbox_size': (60, 60), 'aspect_ratio': (1.0, 1/2, 1/3, 2.0, 3.0)},
-    ]
     """
 
     # Configuration parameters.
     priors_bboxes = []
     m = len(prior_layer_cfg)
 
-    for k in range(1, m):
+    for k in range(1, m + 1):
         # Read data from cfg.
         layer_cfg = prior_layer_cfg[k - 1]
         layer_feature_dim = layer_cfg['feature_dim_hw']
@@ -73,10 +54,53 @@ def generate_prior_bboxes(prior_layer_cfg):
                     priors_bboxes.append([cx, cy, w, h])
 
     # Convert to Tensor.
-    priors_bboxes = torch.Tensor(priors_bboxes).cuda()
+    priors_bboxes = torch.Tensor(priors_bboxes)
     priors_bboxes = torch.clamp(priors_bboxes, 0.0, 1.0)
 
     return priors_bboxes
+
+
+def preprocess(a: torch.Tensor, b: torch.Tensor):
+    """
+    # Preprocess the tensor so both input will be in the same size.
+    :param a: bounding boxes, dim: (n_items, 4) or (1, 4) if b is a reference.
+    :param b: bounding boxes, dim: (n_items, 4) or (1, 4) if b is a reference.
+    :return: bounding box tensors with same dimension.
+    """
+    if a.shape == b.shape:
+        return a, b
+    if b.shape == torch.Size([4]):
+        b = b.unsqueeze(0)
+    b = b.repeat(a.shape[0], 1)
+
+    return a, b
+
+
+def intersect(a: torch.Tensor, b: torch.Tensor):
+    """
+    # Compute the Intersection.
+    :param a: bounding boxes, dim: (n_items, 4) or (1, 4) if b is a reference.
+    :param b: bounding boxes, dim: (n_items, 4) or (1, 4) if b is a reference.
+    :return: intersections values: dim: (n_item).
+    """
+    # Compute the intersections recangle.
+    rec_a = center2corner(a)
+    rec_b = center2corner(b)
+    intersections = torch.cat((torch.max(rec_a, rec_b)[..., :2], torch.min(rec_a, rec_b)[..., 2:]), -1)
+
+    # Compute the intersections area.
+    x1 = intersections[..., 0]
+    y1 = intersections[..., 1]
+    x2 = intersections[..., 2]
+    y2 = intersections[..., 3]
+    sub1 = torch.sub(x2, x1)
+    sub2 = torch.sub(y2, y1)
+    sub1[sub1 < 0] = 0
+    sub2[sub2 < 0] = 0
+
+    intersections = torch.mul(sub1, sub2)
+
+    return intersections
 
 
 def iou(a: torch.Tensor, b: torch.Tensor):
@@ -87,45 +111,12 @@ def iou(a: torch.Tensor, b: torch.Tensor):
     :param b: bounding boxes, dim: (n_items, 4) or (1, 4) if b is a reference.
     :return: iou value: dim: (n_item).
     """
-    # [DEBUG] Check if input is the desire shape.
-    assert a.dim() == 2
-    assert a.shape[1] == 4
-    assert b.dim() == 2
-    assert b.shape[1] == 4
+    a, b = preprocess(a, b)
+    intersections = intersect(a, b)
+    area_a = torch.mul(a[..., 2], a[..., 3])
+    area_b = torch.mul(b[..., 2], b[..., 3])
 
-    # Handle the case if b is a reference.
-    if b.shape[0] == 1 and a.shape[0] > 1:
-        b = b.repeat(a.shape[0], 1)
-
-    # Decide the relationship and compute IoU.
-    iou_list = []
-    box1 = center2corner(a)
-    box2 = center2corner(b)
-    for index in range(0, a.shape[0]):
-
-        # Compute the intersection.
-        x1 = max(box1[index][0], box2[index][0])
-        y1 = max(box1[index][1], box2[index][1])
-        x2 = min(box1[index][2], box2[index][2])
-        y2 = min(box1[index][3], box2[index][3])
-
-        if x1 > x2 or y1 > y2:
-            intersection = 0
-        else:
-            intersection = (x2 - x1) * (y2 - y1)
-
-        # Compute the area for a and b.
-        area_a = a[index][2] * a[index][3]
-        area_b = b[index][2] * b[index][3]
-
-        iou_list.append(intersection / (area_a + area_b - intersection))
-
-    iou_tensor = torch.Tensor(iou_list).cuda()
-
-    # [DEBUG] Check if output is the desire shape.
-    assert iou_tensor.dim() == 1
-    assert iou_tensor.shape[0] == a.shape[0]
-    return iou_tensor
+    return torch.div(intersections, torch.sub(torch.add(area_a, area_b), intersections))
 
 
 def ios(a: torch.Tensor, b: torch.Tensor):
@@ -135,64 +126,35 @@ def ios(a: torch.Tensor, b: torch.Tensor):
     :param b: area, dim: (n_items, 4).
     :return: intersection over smaller value: dim: (n_items).
     """
-    # Handle the case if b is a reference.
-    if b.shape[0] == 1 and a.shape[0] > 1:
-        ndb = np.array(b)
-        ndb = ndb.repeat(a.shape[0], axis=0)
-        b = torch.Tensor(ndb)
+    a, b = preprocess(a, b)
+    intersections = intersect(a, b)
+    area_a = torch.mul(a[..., 2], a[..., 3])
+    area_b = torch.mul(b[..., 2], b[..., 3])
 
-    # Decide the relationship and compute.
-    ios_list = []
-    box1 = center2corner(a)
-    box2 = center2corner(b)
-    for index in range(0, a.shape[0]):
-
-        # Compute the intersection.
-        x1 = max(box1[index][0], box2[index][0])
-        y1 = max(box1[index][1], box2[index][1])
-        x2 = min(box1[index][2], box2[index][2])
-        y2 = min(box1[index][3], box2[index][3])
-
-        if x1 > x2 or y1 > y2:
-            intersection = 0
-        else:
-            intersection = (x2 - x1) * (y2 - y1)
-
-        # Compute the area for a and b.
-        area_a = a[index][2] * a[index][3]
-        area_b = b[index][2] * b[index][3]
-
-        ios_list.append(intersection / min(area_a, area_b))
-
-    ios_tensor = torch.Tensor(ios_list).cuda()
-
-    return ios_tensor
+    return torch.div(intersections, torch.min(area_a, area_b))
 
 
 def match_priors(
-        bboxes: torch.Tensor,
-        labels: torch.Tensor,
+        bounding_boxes: torch.Tensor,
+        locations: torch.Tensor,
         iou_threshold: float):
     """
     Match the ground-truth boxes with the priors. Used in cityscape_dataset.py.
-    :param bboxes: bounding boxes, dim: (num_sample, 4).
-    :param labels: label vector with attached bounding box, dim: (num_match, num_class + 4).
+    :param bounding_boxes: bounding boxes, dim: (num_sample, 4).
+    :param locations: location vector with attached bounding box, dim: (num_match, 4).
     :param iou_threshold: matching criterion.
-    :return labels: real matched labels mapped to all bounding boxes, dim: (num_sample, num_class + 4).
+    :return matched confidence labels.
     """
-    class_zeros = torch.zeros(bboxes.shape[0], labels.shape[1] - 4)
+    matches = torch.zeros(bounding_boxes.shape[0])
 
-    for i_prior in range(bboxes.shape[0]):
-        a = (bboxes[i_prior, -4:]).unsqueeze(0)
-        b = labels[-4:]
-
-        iou_score = iou(b, a)
+    for i_box in range(bounding_boxes.shape[0]):
+        iou_score = iou(locations, bounding_boxes[i_box])
         value, index = iou_score.max(0)
-
         if value > iou_threshold:
-            class_zeros[i_prior] = labels[index, 0:-4]
+            value, index = locations[index].max(0)
+            matches[i_box] = index + 1
 
-    return torch.cat((class_zeros, bboxes), 1)
+    return matches
 
 
 ''' NMS ----------------------------------------------------------------------------------------------------------------
@@ -285,5 +247,5 @@ def corner2center(corner):
     :param corner: bounding box in corner form (x, y) (x + w, y + h).
     :return: bounding box in center form (cx, cy, w, h).
     """
-    return torch.cat([corner[..., 2:] + corner[..., :2] / 2,
+    return torch.cat([corner[..., 2:] / 2 + corner[..., :2] / 2,
                       corner[..., 2:] - corner[..., :2]], dim=-1)

@@ -8,6 +8,9 @@ from mobile_net import MobileNet
 class SsdNet(nn.Module):
     def __init__(self, num_classes, num_prior_bbox):
         super(SsdNet, self).__init__()
+
+        # Include background as class.
+        num_classes += 1
         self.num_classes = num_classes
 
         # Setup the backbone network (base_net).
@@ -53,8 +56,9 @@ class SsdNet(nn.Module):
 
         # Bounding box offset regressor.
         self.loc_regressor = nn.ModuleList([
+            nn.Conv2d(128, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 7
             nn.Conv2d(256, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 11
-            nn.Conv2d(512, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 22
+            nn.Conv2d(512, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 23
             nn.Conv2d(1024, self.num_prior_bbox * 4, kernel_size=3, padding=1),              # Layer 27
             nn.Conv2d(512, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 29
             nn.Conv2d(256, self.num_prior_bbox * 4, kernel_size=3, padding=1),               # Layer 31
@@ -64,9 +68,10 @@ class SsdNet(nn.Module):
 
         # Bounding box classification confidence for each label.
         self.classifier = nn.ModuleList([
+            nn.Conv2d(128, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 7
             nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 11
-            nn.Conv2d(512, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 13
-            nn.Conv2d(1024, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),    # Layer 25
+            nn.Conv2d(512, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 23
+            nn.Conv2d(1024, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),    # Layer 27
             nn.Conv2d(512, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 29
             nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 31
             nn.Conv2d(256, self.num_prior_bbox * num_classes, kernel_size=3, padding=1),     # Layer 33
@@ -121,7 +126,6 @@ class SsdNet(nn.Module):
         return conf, loc
 
     def forward(self, inp):
-
         confidence_list = []
         loc_list = []
         result = inp
@@ -131,16 +135,21 @@ class SsdNet(nn.Module):
             result = module_util.forward_from(
                 self.base_net.base_net,
                 self.base_output_sequence_indices[index], self.base_output_sequence_indices[index + 1], result)
-            confidence, loc = self.feature_to_bbox(self.loc_regressor[index], self.classifier[index], result)
+            confidence, loc = self.feature_to_bbox(
+                self.loc_regressor[index],
+                self.classifier[index], result)
             confidence_list.append(confidence)
             loc_list.append(loc)
 
         # Forward the 'result' to additional layers for extracting coarse features.
+        displacement = len(self.base_output_sequence_indices) - 1
         for index in range(0, len(self.additional_feature_extractor)):
             result = module_util.forward_from(
                 self.additional_feature_extractor,
                 index, index + 1, result)
-            confidence, loc = self.feature_to_bbox(self.loc_regressor[index + 3], self.classifier[index + 3], result)
+            confidence, loc = self.feature_to_bbox(
+                self.loc_regressor[index + displacement],
+                self.classifier[index + displacement], result)
             confidence_list.append(confidence)
             loc_list.append(loc)
 
