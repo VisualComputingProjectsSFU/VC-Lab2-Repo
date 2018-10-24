@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as f
 import torch
-import numpy as np
 
 
 def hard_negative_mining(confidence_predictions, confidence_oracles, neg_pos_ratio=3.0):

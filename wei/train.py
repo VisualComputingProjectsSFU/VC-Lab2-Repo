@@ -10,7 +10,7 @@ import cityscape_dataset
 import bbox_loss
 
 learning_rate = 0.01
-num_worker = 6
+num_worker = 12
 
 # Detect data location.
 data_path = os.path.join('cityscapes_samples')
@@ -22,22 +22,6 @@ if not os.path.isdir(data_path):
 
 # Default configurations.
 np.set_printoptions(suppress=True)
-
-
-def collate_fn(batch):
-    print('Output of Batch')
-    print(len(batch))
-    print('Batch Len')
-    for i in range(0, len(batch)):
-        print('i')
-        print(len(batch[i]))
-        for j in range(0, len(batch[i])):
-            print('j')
-            print(len(batch[j]))
-    print(batch)
-    f = open("out.txt", "w+")
-    f.write(str(batch))
-    return torch.utils.data.dataloader.default_collate(batch)
 
 
 if __name__ == '__main__':
@@ -72,7 +56,7 @@ if __name__ == '__main__':
     print('Creating Dataset & Dataloader')
     dataset = cityscape_dataset.CityScapeDataset(data_list, max(1, num_worker))
     data_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=32, shuffle=True, num_workers=num_worker, collate_fn=collate_fn)
+        dataset, batch_size=32, shuffle=True, num_workers=num_worker)
 
     # Losses collection, used for monitoring over-fit.
     train_losses = []
@@ -85,61 +69,52 @@ if __name__ == '__main__':
 
     for epoch_idx in range(0, max_epochs):
         start_time = datetime.datetime.now()
-        print('===============================================================================')
+        print('\r===============================================================================')
         print('= Epoch {:2d} start at: '.format(epoch_idx) + str(start_time) + '                               =')
         print('===============================================================================')
 
         for train_batch_idx, (inp, confidence_oracles, location_oracles) in enumerate(data_loader):
-            print('INSIDE1')
             iteration += 1
 
             net.train()
             net.cuda()
 
-            print('INSIDE2')
-
             # Zero the parameter gradients.
             optimizer.zero_grad()
 
-            print('INSIDE3')
-
             # Forward.
-            inp = Variable(inp)
+            inp = Variable(inp.cuda())
             confidence_predictions, location_predictions = net.forward(inp)
 
-            print('INSIDE4')
-
             # Compute loss.
-            confidence_oracles = Variable(confidence_oracles)
-            location_oracles = Variable(location_oracles)
+            confidence_oracles = Variable(confidence_oracles.cuda())
+            location_oracles = Variable(location_oracles.cuda())
             loss = criterion(confidence_predictions, location_predictions, confidence_oracles, location_oracles)
-
-            print('INSIDE5')
 
             # Skip when there is no positive detected.
             if type(loss) == int:
-                print('SKIP')
                 continue
 
             # Do the backward and compute gradients.
             loss.backward()
 
-            print('INSIDE6')
-
             # Update the parameters with SGD.
             optimizer.step()
-
-            print('INSIDE7')
 
             # Add the tuple of（iteration, loss) into `train_losses` list.
             train_losses.append((iteration, loss.item()))
 
             if train_batch_idx % 200 == 0:
-                print('Epoch: {:d} Iteration: {:d} Loss: {:f}'.format(epoch_idx, iteration, loss.item()))
+                out = '\rEpoch: {:d} Iteration: {:d} Loss: {:f}'.format(epoch_idx, iteration, loss.item())
+                out = out + '                                '
+                print(out)
 
-        # Save results for every epoch.
-        net_state = net.state_dict()
-        torch.save(net_state, 'ssd_net.pth')
+                # Save results for every 200 iterations.
+                net_state = net.state_dict()
+                torch.save(net_state, 'trained/ssd_net_' + str(iteration) + '.pth')
+
+    net_state = net.state_dict()
+    torch.save(net_state, 'trained/ssd_net_final.pth')
 
     train_losses = np.asarray(train_losses)
     if len(train_losses) > 0:

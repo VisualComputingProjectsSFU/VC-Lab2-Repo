@@ -161,33 +161,33 @@ def match_priors(
 '''
 
 
-def nms_bbox(bbox_locs, bbox_confid_scores, overlap_threshold=0.5, prob_threshold=0.6):
+def nms_bbox(confidences, locations, overlap_threshold=0.5, prob_threshold=0.6):
     """
     Non-maximum suppression for computing best overlapping bounding box for a object
     Use this function when testing the samples.
 
-    :param bbox_locs: bounding box loc and size, dim: (num_priors, 4).
-    :param bbox_confid_scores: bounding box confidence probabilities, dim: (num_priors, num_classes).
+    :param locations: bounding box loc and size, dim: (num_priors, 4).
+    :param confidences: bounding box confidence probabilities, dim: (num_priors, num_classes).
     :param overlap_threshold: the overlap threshold for filtering out outliers.
     :param prob_threshold: threshold to filter out boxes with low confidence level.
     :return: selected bounding box with classes.
     """
 
     # [DEBUG] Check if input is the desire shape.
-    assert bbox_locs.dim() == 2
-    assert bbox_locs.shape[1] == 4
-    assert bbox_confid_scores.dim() == 2
-    assert bbox_confid_scores.shape[0] == bbox_locs.shape[0]
+    assert locations.dim() == 2
+    assert locations.shape[1] == 4
+    assert confidences.dim() == 2
+    assert confidences.shape[0] == locations.shape[0]
 
     bboxes = []
-    num_dim = bbox_locs.shape[1]
-    num_class = bbox_confid_scores.shape[1]
-    for i_bbox in range(0, bbox_locs.shape[0]):
-        bboxes.append(torch.Tensor.numpy(bbox_locs[i_bbox]))
-        bboxes.append(torch.Tensor.numpy(bbox_confid_scores[i_bbox]))
+    num_dim = locations.shape[1]
+    num_class = confidences.shape[1]
+    for i_bbox in range(0, locations.shape[0]):
+        bboxes.append(torch.Tensor.numpy(locations[i_bbox]))
+        bboxes.append(torch.Tensor.numpy(confidences[i_bbox]))
 
     bboxes = np.array(bboxes)
-    bboxes = bboxes.reshape(bbox_locs.shape[0], -1)
+    bboxes = bboxes.reshape(locations.shape[0], -1)
 
     # Preprocess to set any bounding box below confidence threshold to 0.
     for i_bbox in range(0, bboxes.shape[0]):
@@ -221,10 +221,10 @@ def nms_bbox(bbox_locs, bbox_confid_scores, overlap_threshold=0.5, prob_threshol
 
     # Clean all removed boxes and convert to location and confidence.
     bboxes = bboxes[~np.all(bboxes == 0, axis=1)]
-    bbox_locs = torch.Tensor(bboxes[:, 0:4])
-    bbox_confid_scores = torch.Tensor(bboxes[:, 4:])
+    locations = torch.Tensor(bboxes[:, 0:4])
+    confidences = torch.Tensor(bboxes[:, 4:])
 
-    return bbox_locs, bbox_confid_scores
+    return confidences, locations
 
 
 ''' Bounding Box Conversion --------------------------------------------------------------------------------------------

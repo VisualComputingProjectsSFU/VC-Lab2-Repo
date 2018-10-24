@@ -16,7 +16,7 @@ import cProfile
 class CityScapeDataset(Dataset):
     # Configurations.
     classes = ['car', 'cargroup', 'person', 'persongroup']
-    bounding_box_ratios = (1.0, 1/2, 1/3, 1/4, 2.0, 3.0, 4.0)
+    bounding_box_ratios = (1.0, 1/2, 1/3, 2.0, 3.0)
     matching_iou_threshold = 0.3
     cropping_ios_threshold = 0.5
     random_brighten_ratio = 0.5
@@ -81,41 +81,36 @@ class CityScapeDataset(Dataset):
         image = Image.open(item['file'])
         confidences, locations = self.sanitize(item)
 
-        print(np.array(image).shape)
-        print('PRINT1')
-
         # Return the case there is no match at all.
         if confidences.nonzero().shape[0] == 0:
             image = self.resize(image)
-            image = self.crop(image)
+
+            if image.shape != torch.Size([self.imgHeight, self.imgWidth, 3]):
+
+                # Filter out broken input image by a 300x300x3 black patch.
+                image = torch.zeros([300, 300, 3])
+            else:
+
+                # Crop the top left 300x300x3 patch if image is not corrupted.
+                image = image[0:300, 0:300, :]
+
             image = self.normalize(image)
             image = image.view((image.shape[2], image.shape[0], image.shape[1]))
 
-            print('OUT SHAPE')
-            print(image.shape, confidences.shape)
-
             return image, confidences, locations
-
-        print('PRINT2')
 
         # Resize the image and label first.
         image = self.resize(image)
         locations = self.resize(locations)
-
-        print('PRINT3')
 
         # Prepare image array first to update crop.
         image = self.crop(image)
         image = self.brighten(image)
         image = self.normalize(image)
 
-        print('PRINT4')
-
         # Prepare labels second to apply crop.
         locations = self.crop(locations)
         locations = self.normalize(locations)
-
-        print('PRINT5')
 
         # Do the matching prior and generate ground-truth labels as well as the boxes.
         confidences = helper.match_priors(
@@ -127,10 +122,6 @@ class CityScapeDataset(Dataset):
 
         # Reshape image to channel by X by Y.
         image = image.view((image.shape[2], image.shape[0], image.shape[1]))
-
-        print('PRINT6')
-        print('OUT SHAPE')
-        print(image.shape, confidences.shape)
 
         return image, confidences, self.prior_bboxes
 
@@ -175,6 +166,7 @@ class CityScapeDataset(Dataset):
                 self.imgHeight = 300
             image = image.resize((self.imgWidth, self.imgHeight), Image.ANTIALIAS)
             image = np.array(image)
+
             return torch.Tensor(image)
 
         # Case for location input.
@@ -187,10 +179,6 @@ class CityScapeDataset(Dataset):
         # Case for image input.
         if inp.shape == torch.Size([self.imgHeight, self.imgWidth, 3]):
             image = inp
-
-            # Return 300x300 patch if no object is detected.
-            if self.locations is None:
-                return image[0:300, 0:300, :]
 
             # Check the ios of the cropped image with oracle bounding box to ensure at least one labeled item.
             found = False
