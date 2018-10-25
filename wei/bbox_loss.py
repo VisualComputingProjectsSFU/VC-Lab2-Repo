@@ -68,8 +68,8 @@ class MultiboxLoss(nn.Module):
 
         # Loss for the bounding box prediction.
         location_loss = f.smooth_l1_loss(
-            location_predictions[selected_flags],
-            location_oracles[selected_flags].type(torch.cuda.FloatTensor), reduction='sum')
+            location_predictions[pos_flags],
+            location_oracles[pos_flags].type(torch.cuda.FloatTensor), reduction='sum')
         loss = torch.div(torch.add(confidence_loss, location_loss), num_positive)
 
         return loss
